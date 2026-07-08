@@ -1,0 +1,8 @@
+Service Portal test URL for the CMDB Annual Risk Assessment Catalog Item:
+
+https://mtbdev.service-now.com/sp?id=sc_cat_item&sys_id=49a8177f3bb54b106879d3c643e45a63&sysparm_assessment_sys_id=7e9ec148933d47103a57fc3d4803d6b4&sysparm_class_name=u_cmdb_ci_tcr&sysparm_owner_group=APP%20-%20Asset%20%26%20CMDB%20Automation&sysparm_assessment_year=2026
+
+Use this Service Portal URL instead of the classic catalog item URL.
+
+Classic URL pattern to avoid:
+/now/nav/ui/classic/params/target/com.glideapp.servicecatalog_cat_item_view.do
