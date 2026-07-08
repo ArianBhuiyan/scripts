@@ -8,7 +8,8 @@
  *   class_name_filter String    Optional sys_class_name for single-class testing.
  *
  * Script output:
- *   summary          String     JSON execution statistics.
+ *   summary                  String JSON execution statistics.
+ *   created_assessments_json String JSON array of created assessment link data.
  *
  * Eligibility:
  *   A class is a candidate when any cmdb_ci record in that class has
@@ -39,7 +40,9 @@
         assessmentOwnerGroupField: 'u_owner_group',
 
         assignedStateValue: 'assigned',
-        eacmGroupSysId: '1774614b874f05d039e44226cebb3510'
+        eacmGroupSysId: '1774614b874f05d039e44226cebb3510',
+
+        catalogItemUrlPrefix: 'sp?id=sc_cat_item&sys_id=49a8177f3bb54b106879d3c643e45a63&sysparm_assessment_sys_id='
     };
 
     var dryRun = String(inputs.dry_run) === 'true';
@@ -59,6 +62,8 @@
         routedToEacm: 0,
         failed: 0
     };
+
+    var createdAssessments = [];
 
     // Filter qualifying CIs first, then return one aggregate row per class.
     var ciClasses = new GlideAggregate(CONFIG.ciTable);
@@ -164,11 +169,22 @@
 
         if (assessmentSysId) {
             stats.created++;
+            createdAssessments.push({
+                assessment_sys_id: String(assessmentSysId),
+                class_name: className,
+                assigned_group: assignedGroup,
+                catalog_url: CONFIG.catalogItemUrlPrefix + assessmentSysId
+            });
         } else {
             stats.failed++;
         }
     }
 
     outputs.summary = JSON.stringify(stats);
+    outputs.created_assessments_json = JSON.stringify(createdAssessments);
     gs.info('[Annual Assessment] Summary: ' + outputs.summary);
+    gs.info(
+        '[Annual Assessment] Created Assessments JSON: ' +
+        outputs.created_assessments_json
+    );
 })(inputs, outputs);
