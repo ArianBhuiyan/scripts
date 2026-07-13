@@ -9,15 +9,17 @@
  *
  * Script outputs:
  *   summary                   String JSON execution statistics.
- *   notification_payload_json String JSON array of prepared notification/link data.
+ *   notification_payload_json String JSON array of batched notification/link data.
  *
  * Purpose:
  *   Keep assessment generation separate from notification handling.
  *   This Action parses the generated assessment link data and prepares one
- *   notification payload per created assessment. In dry-run mode it only logs
- *   the payload. When notification_dry_run is false, it queues a ServiceNow
- *   event per assessment. The event must exist in Event Registry and have a
- *   Notification configured before real sending is useful.
+ *   notification payload per assigned group. That keeps the MVP from sending
+ *   one email per assessment when the same owner/group has multiple classes.
+ *   In dry-run mode it only logs the payload. When notification_dry_run is
+ *   false, it queues one ServiceNow event per assigned group. The event must
+ *   exist in Event Registry and have a Notification configured before real
+ *   sending is useful.
  */
 (function execute(inputs, outputs) {
     var CONFIG = {
@@ -35,6 +37,7 @@
     var stats = {
         received: 0,
         prepared: 0,
+        assessmentLinksPrepared: 0,
         queued: 0,
         skippedInvalidRow: 0,
         skippedMissingAssessment: 0,
@@ -44,6 +47,8 @@
     };
 
     var notificationPayloads = [];
+    var payloadsByAssignedGroup = {};
+    var payloadOrder = [];
     var createdAssessments;
 
     try {
@@ -94,44 +99,102 @@
             String(row.assigned_group || '').trim() ||
             assessment.getValue(CONFIG.assessmentAssignedGroupField);
 
-        var payload = {
+        if (!assignedGroup) {
+            stats.skippedInvalidRow++;
+            gs.warn(
+                '[Annual Assessment Notification] Skipping assessment with no assigned group: ' +
+                assessmentSysId
+            );
+            continue;
+        }
+
+        if (!payloadsByAssignedGroup[assignedGroup]) {
+            payloadsByAssignedGroup[assignedGroup] = {
+                assigned_group: assignedGroup,
+                assigned_group_display: assessment.getDisplayValue(
+                    CONFIG.assessmentAssignedGroupField
+                ),
+                event_record_sys_id: assessmentSysId,
+                assessment_count: 0,
+                assessments: [],
+                catalog_urls: [],
+                link_list_text: ''
+            };
+            payloadOrder.push(assignedGroup);
+        }
+
+        var assessmentPayload = {
             assessment_sys_id: assessmentSysId,
             assessment_display: assessment.getDisplayValue(),
             class_name:
                 String(row.class_name || '').trim() ||
                 assessment.getDisplayValue(CONFIG.assessmentClassField),
             assessment_year: assessment.getValue(CONFIG.assessmentYearField),
-            assigned_group: assignedGroup,
-            assigned_group_display: assessment.getDisplayValue(
-                CONFIG.assessmentAssignedGroupField
-            ),
             catalog_url: catalogUrl
         };
 
+        payloadsByAssignedGroup[assignedGroup].assessments.push(
+            assessmentPayload
+        );
+        payloadsByAssignedGroup[assignedGroup].catalog_urls.push(catalogUrl);
+        payloadsByAssignedGroup[assignedGroup].assessment_count++;
+        stats.assessmentLinksPrepared++;
+    }
+
+    for (var j = 0; j < payloadOrder.length; j++) {
+        var groupSysId = payloadOrder[j];
+        var payload = payloadsByAssignedGroup[groupSysId];
+
+        var linkLines = [];
+
+        for (var k = 0; k < payload.assessments.length; k++) {
+            var item = payload.assessments[k];
+            linkLines.push(
+                '- ' +
+                item.class_name +
+                ' (' +
+                item.assessment_year +
+                '): ' +
+                item.catalog_url
+            );
+        }
+
+        payload.link_list_text = linkLines.join('\n');
         notificationPayloads.push(payload);
         stats.prepared++;
 
         if (notificationDryRun) {
             gs.info(
-                '[Annual Assessment Notification] DRY RUN payload: ' +
+                '[Annual Assessment Notification] DRY RUN batch payload: ' +
                 JSON.stringify(payload)
             );
             continue;
         }
 
         try {
+            var eventRecord = new GlideRecord(CONFIG.assessmentTable);
+
+            if (!eventRecord.get(payload.event_record_sys_id)) {
+                stats.skippedMissingAssessment++;
+                gs.warn(
+                    '[Annual Assessment Notification] Event record not found: ' +
+                    payload.event_record_sys_id
+                );
+                continue;
+            }
+
             gs.eventQueue(
                 eventName,
-                assessment,
-                catalogUrl,
+                eventRecord,
+                payload.link_list_text,
                 JSON.stringify(payload)
             );
             stats.queued++;
         } catch (queueError) {
             stats.failed++;
             gs.error(
-                '[Annual Assessment Notification] Failed to queue event for ' +
-                assessmentSysId +
+                '[Annual Assessment Notification] Failed to queue event for group ' +
+                groupSysId +
                 ': ' +
                 queueError.message
             );
