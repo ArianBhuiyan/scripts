@@ -3,25 +3,27 @@
  * Generate Annual CMDB Risk Assessments
  *
  * Action inputs:
- *   assessment_year  String     Optional; defaults to the current local year.
- *   dry_run          True/False Keep true until candidate results are validated.
- *   class_name_filter String    Optional sys_class_name for single-class testing.
+ *   assessment_year   String     Optional; defaults to the current local year.
+ *   dry_run           True/False Keep true until candidate results are valid.
+ *   class_name_filter String     Optional raw sys_class_name for single-class tests.
  *
- * Script output:
+ * Script outputs:
  *   summary                  String JSON execution statistics.
  *   created_assessments_json String JSON array of created assessment link data.
  *
- * Eligibility:
- *   Flow 1 no longer scans cmdb_ci directly. Eligibility comes from the
- *   CMDB Assessment Class Exclusions/master table. A class is a candidate when
- *   the master row is active and not excluded. The EACM team owns group
- *   assignment on that master table. If the master row has no owner group,
- *   Flow 1 skips it so EACM can complete manual assignment first.
+ * Eligibility source:
+ *   Flow 1 reads the CMDB Assessment Class Exclusions/master table only.
+ *
+ * Current class-key design:
+ *   u_cmdb_assessment_class_exclusions.u_class references sys_db_object.
+ *   u_cmdb_assessment.u_class also references sys_db_object.
+ *
+ * Do NOT require cmdb_class_info for eligibility.
  */
 (function execute(inputs, outputs) {
     var CONFIG = {
-        classInfoTable: 'cmdb_class_info',
-        classInfoMatchField: 'class',
+        tableDefinitionTable: 'sys_db_object',
+        tableDefinitionNameField: 'name',
 
         masterTable: 'u_cmdb_assessment_class_exclusions',
         masterClassField: 'u_class',
@@ -54,17 +56,54 @@
         created: 0,
         skippedExcluded: 0,
         skippedDuplicate: 0,
-        skippedInactive: 0,
-        skippedMissingClassInfo: 0,
+        skippedMissingClass: 0,
+        skippedMissingTableDefinition: 0,
         skippedMissingOwnerGroup: 0,
-        routedToEacm: 0,
         failed: 0
     };
 
     var createdAssessments = [];
+    var tableNameBySysIdCache = {};
+
+    function finish() {
+        outputs.summary = JSON.stringify(stats);
+        outputs.created_assessments_json = JSON.stringify(createdAssessments);
+        gs.info('[Annual Assessment] Summary: ' + outputs.summary);
+        gs.info(
+            '[Annual Assessment] Created Assessments JSON: ' +
+            outputs.created_assessments_json
+        );
+    }
 
     function encodeUrlValue(value) {
         return encodeURIComponent(String(value || ''));
+    }
+
+    function isTrueValue(value) {
+        var normalized = String(value || '').toLowerCase();
+        return normalized === '1' || normalized === 'true';
+    }
+
+    function getTableNameBySysId(tableSysId) {
+        if (!tableSysId) {
+            return '';
+        }
+
+        if (tableNameBySysIdCache.hasOwnProperty(tableSysId)) {
+            return tableNameBySysIdCache[tableSysId];
+        }
+
+        var tableDef = new GlideRecord(CONFIG.tableDefinitionTable);
+
+        if (tableDef.get(tableSysId)) {
+            tableNameBySysIdCache[tableSysId] = tableDef.getValue(
+                CONFIG.tableDefinitionNameField
+            );
+        } else {
+            tableNameBySysIdCache[tableSysId] = '';
+        }
+
+        return tableNameBySysIdCache[tableSysId];
     }
 
     function buildCatalogUrl(assessmentSysId, className, ownerGroupDisplay) {
@@ -81,14 +120,47 @@
         );
     }
 
-    // The master table is now the source of truth for Flow 1 eligibility.
+    function hasDuplicateAssessment(classSysId) {
+        var existing = new GlideRecord(CONFIG.assessmentTable);
+        existing.addQuery(CONFIG.assessmentClassField, classSysId);
+        existing.addQuery(CONFIG.assessmentYearField, year);
+        existing.setLimit(1);
+        existing.query();
+        return existing.hasNext();
+    }
+
+    var masterProbe = new GlideRecord(CONFIG.masterTable);
+    var assessmentProbe = new GlideRecord(CONFIG.assessmentTable);
+
+    if (!masterProbe.isValidField(CONFIG.masterClassField)) {
+        stats.failed++;
+        stats.error =
+            'Missing required field ' +
+            CONFIG.masterTable +
+            '.' +
+            CONFIG.masterClassField;
+        finish();
+        return;
+    }
+
+    if (!assessmentProbe.isValidField(CONFIG.assessmentClassField)) {
+        stats.failed++;
+        stats.error =
+            'Missing required field ' +
+            CONFIG.assessmentTable +
+            '.' +
+            CONFIG.assessmentClassField;
+        finish();
+        return;
+    }
+
     var master = new GlideRecord(CONFIG.masterTable);
     master.addQuery(CONFIG.masterActiveField, true);
     master.addNotNullQuery(CONFIG.masterClassField);
 
     if (classFilter) {
         master.addQuery(
-            CONFIG.masterClassField + '.' + CONFIG.classInfoMatchField,
+            CONFIG.masterClassField + '.' + CONFIG.tableDefinitionNameField,
             classFilter
         );
     }
@@ -98,42 +170,30 @@
     while (master.next()) {
         stats.activeClasses++;
 
-        if (String(master.getValue(CONFIG.masterExcludedField)) === '1') {
+        if (isTrueValue(master.getValue(CONFIG.masterExcludedField))) {
             stats.skippedExcluded++;
             continue;
         }
 
         var classSysId = master.getValue(CONFIG.masterClassField);
 
-        var classInfo = new GlideRecord(CONFIG.classInfoTable);
+        if (!classSysId) {
+            stats.skippedMissingClass++;
+            continue;
+        }
 
-        if (!classInfo.get(classSysId)) {
-            stats.skippedMissingClassInfo++;
+        var className = getTableNameBySysId(classSysId);
+
+        if (!className) {
+            stats.skippedMissingTableDefinition++;
             gs.warn(
-                '[Annual Assessment] Master row has missing class-info reference: ' +
+                '[Annual Assessment] Skipping master row with invalid sys_db_object reference: ' +
                 master.getUniqueValue()
             );
             continue;
         }
 
-        var className = classInfo.getValue(CONFIG.classInfoMatchField);
-
-        // Prevent duplicate assessments for the same class and year.
-        var existing = new GlideRecord(CONFIG.assessmentTable);
-        existing.addQuery(CONFIG.assessmentClassField, classSysId);
-        existing.addQuery(CONFIG.assessmentYearField, year);
-        existing.setLimit(1);
-        existing.query();
-
-        if (existing.hasNext()) {
-            stats.skippedDuplicate++;
-            continue;
-        }
-
-        // Owner group now comes only from the master table. Do not use
-        // cmdb_class_info.managed_by_group for Flow 1 assignment.
         var ownerGroup = master.getValue(CONFIG.masterOwnerGroupField);
-        var assignedGroup = ownerGroup;
 
         if (!ownerGroup) {
             stats.skippedMissingOwnerGroup++;
@@ -142,6 +202,11 @@
                 className +
                 ' because master owner group is empty'
             );
+            continue;
+        }
+
+        if (hasDuplicateAssessment(classSysId)) {
+            stats.skippedDuplicate++;
             continue;
         }
 
@@ -170,15 +235,12 @@
         );
         assessment.setValue(
             CONFIG.assessmentAssignedGroupField,
-            assignedGroup
+            ownerGroup
         );
-
-        if (ownerGroup) {
-            assessment.setValue(
-                CONFIG.assessmentOwnerGroupField,
-                ownerGroup
-            );
-        }
+        assessment.setValue(
+            CONFIG.assessmentOwnerGroupField,
+            ownerGroup
+        );
 
         var assessmentSysId = assessment.insert();
 
@@ -186,8 +248,9 @@
             stats.created++;
             createdAssessments.push({
                 assessment_sys_id: String(assessmentSysId),
+                class_sys_id: classSysId,
                 class_name: className,
-                assigned_group: assignedGroup,
+                assigned_group: ownerGroup,
                 assigned_group_display: assignedGroupDisplay,
                 catalog_url: buildCatalogUrl(
                     assessmentSysId,
@@ -197,14 +260,12 @@
             });
         } else {
             stats.failed++;
+            gs.error(
+                '[Annual Assessment] Failed to insert assessment for ' +
+                className
+            );
         }
     }
 
-    outputs.summary = JSON.stringify(stats);
-    outputs.created_assessments_json = JSON.stringify(createdAssessments);
-    gs.info('[Annual Assessment] Summary: ' + outputs.summary);
-    gs.info(
-        '[Annual Assessment] Created Assessments JSON: ' +
-        outputs.created_assessments_json
-    );
+    finish();
 })(inputs, outputs);
