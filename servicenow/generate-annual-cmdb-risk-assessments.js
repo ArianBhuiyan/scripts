@@ -12,25 +12,22 @@
  *   created_assessments_json String JSON array of created assessment link data.
  *
  * Eligibility:
- *   A class is a candidate when any cmdb_ci record in that class has
- *   install_status 1 (Installed) or 4 (Pending Install). Each class is
- *   processed once. An explicit exclusion or existing class/year assessment
- *   prevents creation.
+ *   Flow 1 no longer scans cmdb_ci directly. Eligibility comes from the
+ *   CMDB Assessment Class Exclusions/master table. A class is a candidate when
+ *   the master row is active and not excluded. The EACM team owns group
+ *   assignment on that master table. If the master row has no owner group,
+ *   the assessment routes to the EACM fallback group.
  */
 (function execute(inputs, outputs) {
     var CONFIG = {
         classInfoTable: 'cmdb_class_info',
         classInfoMatchField: 'class',
-        classOwnerGroupField: 'managed_by_group',
 
-        ciTable: 'cmdb_ci',
-        ciClassField: 'sys_class_name',
-        ciStatusField: 'install_status',
-        activeStatusValues: ['1', '4'],
-
-        exclusionTable: 'u_cmdb_assessment_class_exclusions',
-        exclusionClassField: 'u_class',
-        exclusionExcludedField: 'u_excluded',
+        masterTable: 'u_cmdb_assessment_class_exclusions',
+        masterClassField: 'u_class',
+        masterActiveField: 'u_active',
+        masterExcludedField: 'u_excluded',
+        masterOwnerGroupField: 'u_owner_group',
 
         assessmentTable: 'u_cmdb_assessment',
         assessmentClassField: 'u_class',
@@ -42,7 +39,7 @@
         assignedStateValue: 'assigned',
         eacmGroupSysId: '1774614b874f05d039e44226cebb3510',
 
-        catalogItemUrlPrefix: 'sp?id=sc_cat_item&sys_id=49a8177f3bb54b106879d3c643e45a63&sysparm_assessment_sys_id='
+        catalogItemBaseUrl: '/sp?id=sc_cat_item&sys_id=49a8177f3bb54b106879d3c643e45a63'
     };
 
     var dryRun = String(inputs.dry_run) === 'true';
@@ -58,6 +55,7 @@
         created: 0,
         skippedExcluded: 0,
         skippedDuplicate: 0,
+        skippedInactive: 0,
         skippedMissingClassInfo: 0,
         routedToEacm: 0,
         failed: 0
@@ -65,55 +63,74 @@
 
     var createdAssessments = [];
 
-    // Filter qualifying CIs first, then return one aggregate row per class.
-    var ciClasses = new GlideAggregate(CONFIG.ciTable);
-    ciClasses.addQuery(
-        CONFIG.ciStatusField,
-        'IN',
-        CONFIG.activeStatusValues.join(',')
-    );
-    ciClasses.addNotNullQuery(CONFIG.ciClassField);
-
-    if (classFilter) {
-        ciClasses.addQuery(CONFIG.ciClassField, classFilter);
+    function encodeUrlValue(value) {
+        return encodeURIComponent(String(value || ''));
     }
 
-    ciClasses.addAggregate('COUNT');
-    ciClasses.groupBy(CONFIG.ciClassField);
-    ciClasses.query();
+    function getGroupDisplayName(groupSysId) {
+        if (!groupSysId) {
+            return '';
+        }
 
-    while (ciClasses.next()) {
+        var group = new GlideRecord('sys_user_group');
+
+        if (group.get(groupSysId)) {
+            return group.getDisplayValue();
+        }
+
+        return String(groupSysId);
+    }
+
+    function buildCatalogUrl(assessmentSysId, className, ownerGroupDisplay) {
+        return (
+            CONFIG.catalogItemBaseUrl +
+            '&sysparm_assessment_sys_id=' +
+            encodeUrlValue(assessmentSysId) +
+            '&sysparm_class_name=' +
+            encodeUrlValue(className) +
+            '&sysparm_owner_group=' +
+            encodeUrlValue(ownerGroupDisplay) +
+            '&sysparm_assessment_year=' +
+            encodeUrlValue(year)
+        );
+    }
+
+    // The master table is now the source of truth for Flow 1 eligibility.
+    var master = new GlideRecord(CONFIG.masterTable);
+    master.addQuery(CONFIG.masterActiveField, true);
+    master.addNotNullQuery(CONFIG.masterClassField);
+
+    if (classFilter) {
+        master.addQuery(
+            CONFIG.masterClassField + '.' + CONFIG.classInfoMatchField,
+            classFilter
+        );
+    }
+
+    master.query();
+
+    while (master.next()) {
         stats.activeClasses++;
 
-        var className = ciClasses.getValue(CONFIG.ciClassField);
+        if (String(master.getValue(CONFIG.masterExcludedField)) === '1') {
+            stats.skippedExcluded++;
+            continue;
+        }
 
-        // Match the raw CI class table name to cmdb_class_info.
+        var classSysId = master.getValue(CONFIG.masterClassField);
+
         var classInfo = new GlideRecord(CONFIG.classInfoTable);
-        classInfo.addQuery(CONFIG.classInfoMatchField, className);
-        classInfo.setLimit(1);
-        classInfo.query();
 
-        if (!classInfo.next()) {
+        if (!classInfo.get(classSysId)) {
             stats.skippedMissingClassInfo++;
             gs.warn(
-                '[Annual Assessment] No class-info record for ' + className
+                '[Annual Assessment] Master row has missing class-info reference: ' +
+                master.getUniqueValue()
             );
             continue;
         }
 
-        var classSysId = classInfo.getUniqueValue();
-
-        // Only an explicit true exclusion blocks a class.
-        var exclusion = new GlideRecord(CONFIG.exclusionTable);
-        exclusion.addQuery(CONFIG.exclusionClassField, classSysId);
-        exclusion.addQuery(CONFIG.exclusionExcludedField, true);
-        exclusion.setLimit(1);
-        exclusion.query();
-
-        if (exclusion.hasNext()) {
-            stats.skippedExcluded++;
-            continue;
-        }
+        var className = classInfo.getValue(CONFIG.classInfoMatchField);
 
         // Prevent duplicate assessments for the same class and year.
         var existing = new GlideRecord(CONFIG.assessmentTable);
@@ -127,8 +144,13 @@
             continue;
         }
 
-        var ownerGroup = classInfo.getValue(CONFIG.classOwnerGroupField);
+        // Owner group now comes only from the master table. Do not use
+        // cmdb_class_info.managed_by_group for Flow 1 assignment.
+        var ownerGroup = master.getValue(CONFIG.masterOwnerGroupField);
         var assignedGroup = ownerGroup || CONFIG.eacmGroupSysId;
+        var assignedGroupDisplay =
+            master.getDisplayValue(CONFIG.masterOwnerGroupField) ||
+            getGroupDisplayName(CONFIG.eacmGroupSysId);
 
         if (!ownerGroup) {
             stats.routedToEacm++;
@@ -140,7 +162,7 @@
                 '[Annual Assessment] DRY RUN: ' +
                 className +
                 ' would be assigned to ' +
-                assignedGroup
+                assignedGroupDisplay
             );
             continue;
         }
@@ -173,7 +195,12 @@
                 assessment_sys_id: String(assessmentSysId),
                 class_name: className,
                 assigned_group: assignedGroup,
-                catalog_url: CONFIG.catalogItemUrlPrefix + assessmentSysId
+                assigned_group_display: assignedGroupDisplay,
+                catalog_url: buildCatalogUrl(
+                    assessmentSysId,
+                    className,
+                    assignedGroupDisplay
+                )
             });
         } else {
             stats.failed++;
