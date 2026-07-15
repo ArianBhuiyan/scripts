@@ -64,43 +64,26 @@
         return;
     }
 
-    var questionMap = [
-        {
-            variable: 'question_1',
-            question: '720344f7fba5831033e5fde55eefdc83'
-        },
-        {
-            variable: 'question_2',
-            question: 'e643c4f7fba5831033e5fde55eefdc83'
-        },
-        {
-            variable: 'question_3',
-            question: '1673c03bfba5831033e5fde55efdc57'
-        },
-        {
-            variable: 'question_4',
-            question: '3f83083bfba5831033e5fde55eefdc39'
-        },
-        {
-            variable: 'question_5',
-            question: 'b2b3807bfba5831033e5fde55eefdce9'
-        },
-        {
-            variable: 'question_6',
-            question: '28e3047bfba5831033e5fde55eefdcb6'
-        }
+    var questionVariables = [
+        'question_1',
+        'question_2',
+        'question_3',
+        'question_4',
+        'question_5',
+        'question_6'
     ];
 
     var preparedResponses = [];
+    var seenQuestionSysIds = {};
 
-    for (var i = 0; i < questionMap.length; i++) {
-        var item = questionMap[i];
-        var answerChoiceSysId = String(current.variables[item.variable] || '').trim();
+    for (var i = 0; i < questionVariables.length; i++) {
+        var variableName = questionVariables[i];
+        var answerChoiceSysId = String(current.variables[variableName] || '').trim();
 
         if (!answerChoiceSysId) {
             gs.error(
                 '[CMDB Assessment Submit] Missing answer for ' +
-                item.variable +
+                variableName +
                 ' on ' +
                 assessmentSysId
             );
@@ -112,28 +95,41 @@
         if (!answerChoice.get(answerChoiceSysId)) {
             gs.error(
                 '[CMDB Assessment Submit] Answer choice not found for ' +
-                item.variable +
+                variableName +
                 ': ' +
                 answerChoiceSysId
             );
             return;
         }
 
-        if (
-            String(answerChoice.getValue(CONFIG.answerChoiceQuestionField)) !==
-            item.question
-        ) {
+        var questionSysId = String(
+            answerChoice.getValue(CONFIG.answerChoiceQuestionField) || ''
+        ).trim();
+
+        if (!questionSysId) {
             gs.error(
                 '[CMDB Assessment Submit] Answer choice ' +
                 answerChoiceSysId +
-                ' does not belong to expected question ' +
-                item.question
+                ' has no linked question for ' +
+                variableName
             );
             return;
         }
 
+        if (seenQuestionSysIds[questionSysId]) {
+            gs.error(
+                '[CMDB Assessment Submit] Duplicate submitted answer for question ' +
+                questionSysId +
+                ' on ' +
+                assessmentSysId
+            );
+            return;
+        }
+
+        seenQuestionSysIds[questionSysId] = true;
+
         preparedResponses.push({
-            question: item.question,
+            question: questionSysId,
             answerChoice: answerChoiceSysId,
             rawScore: answerChoice.getValue(CONFIG.answerChoiceScoreField)
         });
