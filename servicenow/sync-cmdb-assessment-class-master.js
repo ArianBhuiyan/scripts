@@ -9,20 +9,18 @@
  *   u_cmdb_assessment_class_exclusions.u_class is the class key.
  *   It should reference sys_db_object, not cmdb_class_info.
  *
- * Why:
- *   cmdb_ci.sys_class_name stores real CI table names such as:
- *     cmdb_ci_ad_controller
- *     cmdb_ci_aircraft
- *     cmdb_ci_apache_active_mq
+ * Candidate class inventory:
+ *   1. Pull broad class inventory from cmdb_class_info.class.
+ *   2. Also pull distinct cmdb_ci.sys_class_name values.
+ *   3. Union those two sets.
+ *   4. Resolve each class/table name to sys_db_object.name.
  *
- *   Some of those classes do not exist in cmdb_class_info, so cmdb_class_info
- *   cannot be the eligibility gate. sys_db_object is the table-definition
- *   registry and should contain the CI table/class definitions.
+ * Why this hybrid source:
+ *   cmdb_class_info gives EACM the broad class inventory they expect.
+ *   cmdb_ci catches real CI classes that are missing from cmdb_class_info.
+ *   sys_db_object is the canonical table-definition reference target.
  *
  * Active logic:
- *   - Read distinct cmdb_ci.sys_class_name values.
- *   - Resolve each table name to sys_db_object.name.
- *   - Insert/update one master row per sys_db_object class.
  *   - Set u_active=true when ANY CI in that class has install_status 1 or 4.
  *   - Set u_active=false otherwise.
  *
@@ -41,6 +39,9 @@
  */
 (function syncCmdbAssessmentClassMaster() {
     var CONFIG = {
+        classInfoTable: 'cmdb_class_info',
+        classInfoClassField: 'class',
+
         ciTable: 'cmdb_ci',
         ciClassField: 'sys_class_name',
         ciStatusField: 'install_status',
@@ -58,12 +59,14 @@
     };
 
     var stats = {
+        classInfoClasses: 0,
         cmdbCiClasses: 0,
         activeCmdbCiClasses: 0,
+        candidateClasses: 0,
         insertedMasterRows: 0,
         updatedMasterRows: 0,
         unchangedMasterRows: 0,
-        deactivatedMissingFromCi: 0,
+        deactivatedNoLongerCandidate: 0,
         deactivatedInvalidClassReference: 0,
         skippedMissingClassName: 0,
         skippedMissingTableDefinition: 0,
@@ -71,8 +74,10 @@
     };
 
     var now = new GlideDateTime();
+    var classInfoClasses = {};
     var allCiClasses = {};
     var activeCiClasses = {};
+    var candidateClasses = {};
     var tableDefinitionCache = {};
     var tableNameBySysIdCache = {};
 
@@ -88,6 +93,18 @@
         }
 
         return false;
+    }
+
+    function addCandidateClass(className) {
+        if (!className) {
+            stats.skippedMissingClassName++;
+            return;
+        }
+
+        if (!candidateClasses[className]) {
+            candidateClasses[className] = true;
+            stats.candidateClasses++;
+        }
     }
 
     function getTableDefinitionSysId(tableName) {
@@ -132,6 +149,28 @@
         return tableNameBySysIdCache[tableSysId];
     }
 
+    function collectClassInfoClasses() {
+        var classInfo = new GlideRecord(CONFIG.classInfoTable);
+        classInfo.addNotNullQuery(CONFIG.classInfoClassField);
+        classInfo.query();
+
+        while (classInfo.next()) {
+            var className = classInfo.getValue(CONFIG.classInfoClassField);
+
+            if (!className) {
+                stats.skippedMissingClassName++;
+                continue;
+            }
+
+            if (!classInfoClasses[className]) {
+                classInfoClasses[className] = true;
+                stats.classInfoClasses++;
+            }
+
+            addCandidateClass(className);
+        }
+    }
+
     function collectCiClasses() {
         var allAgg = new GlideAggregate(CONFIG.ciTable);
         allAgg.addNotNullQuery(CONFIG.ciClassField);
@@ -149,6 +188,7 @@
 
             allCiClasses[className] = true;
             stats.cmdbCiClasses++;
+            addCandidateClass(className);
         }
 
         var activeAgg = new GlideAggregate(CONFIG.ciTable);
@@ -172,6 +212,7 @@
 
             activeCiClasses[activeClassName] = true;
             stats.activeCmdbCiClasses++;
+            addCandidateClass(activeClassName);
         }
     }
 
@@ -244,7 +285,7 @@
         }
     }
 
-    function deactivateRowsMissingFromCi() {
+    function deactivateRowsMissingFromCandidates() {
         var master = new GlideRecord(CONFIG.masterTable);
         master.addQuery(CONFIG.masterActiveField, true);
         master.addNotNullQuery(CONFIG.masterClassField);
@@ -267,12 +308,12 @@
                 continue;
             }
 
-            if (!allCiClasses[className]) {
+            if (!candidateClasses[className]) {
                 master.setValue(CONFIG.masterActiveField, false);
                 setIfValid(master, CONFIG.optionalLastSyncedField, now);
 
                 if (master.update()) {
-                    stats.deactivatedMissingFromCi++;
+                    stats.deactivatedNoLongerCandidate++;
                 } else {
                     stats.failed++;
                 }
@@ -292,15 +333,16 @@
         return;
     }
 
+    collectClassInfoClasses();
     collectCiClasses();
 
-    for (var className in allCiClasses) {
-        if (allCiClasses.hasOwnProperty(className)) {
+    for (var className in candidateClasses) {
+        if (candidateClasses.hasOwnProperty(className)) {
             upsertMasterRow(className);
         }
     }
 
-    deactivateRowsMissingFromCi();
+    deactivateRowsMissingFromCandidates();
 
     gs.info(
         '[CMDB Assessment Class Master Sync] Summary: ' +
