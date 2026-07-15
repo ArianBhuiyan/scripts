@@ -7,14 +7,15 @@
  *
  * Purpose:
  *   Treat u_cmdb_assessment_class_exclusions as the Flow 1 master table.
- *   It should contain one row per eligible active CI class. Active means
- *   at least one cmdb_ci record for the class has install_status Installed (1)
- *   or Pending Install (4).
+ *   It should contain one row per cmdb_class_info class. Active means at least
+ *   one cmdb_ci record for the class has install_status Installed (1) or
+ *   Pending Install (4). Classes without active CIs are still inserted, but
+ *   they are marked u_active = false.
  *
  * Required master-table fields:
  *   u_class       Reference to cmdb_class_info
  *   u_excluded    True/False manual exclusion checkbox
- *   u_active      True/False active eligibility checkbox
+ *   u_active      True/False active eligibility checkbox; default false
  *   u_owner_group Reference to sys_user_group, manually assigned by EACM
  *
  * Optional master-table fields if the team adds them:
@@ -45,15 +46,19 @@
 
     var stats = {
         activeCiClasses: 0,
+        classInfoRows: 0,
         insertedMasterRows: 0,
-        reactivatedMasterRows: 0,
-        alreadyActiveMasterRows: 0,
+        insertedActiveMasterRows: 0,
+        insertedInactiveMasterRows: 0,
+        activatedMasterRows: 0,
         deactivatedMasterRows: 0,
+        unchangedMasterRows: 0,
         skippedMissingClassInfo: 0,
         failed: 0
     };
 
     var activeClassInfoSysIds = {};
+    var activeClassNamesWithoutClassInfo = {};
     var now = new GlideDateTime();
 
     function setIfValid(record, fieldName, value) {
@@ -84,6 +89,7 @@
         classInfo.query();
 
         if (!classInfo.next()) {
+            activeClassNamesWithoutClassInfo[className] = true;
             stats.skippedMissingClassInfo++;
             gs.warn(
                 '[CMDB Assessment Class Master Sync] No class-info record for active CI class ' +
@@ -94,6 +100,18 @@
 
         var classSysId = classInfo.getUniqueValue();
         activeClassInfoSysIds[classSysId] = true;
+    }
+
+    var classRegistry = new GlideRecord(CONFIG.classInfoTable);
+    classRegistry.addNotNullQuery(CONFIG.classInfoMatchField);
+    classRegistry.query();
+
+    while (classRegistry.next()) {
+        stats.classInfoRows++;
+
+        var classSysId = classRegistry.getUniqueValue();
+        var className = classRegistry.getValue(CONFIG.classInfoMatchField);
+        var shouldBeActive = activeClassInfoSysIds[classSysId] === true;
 
         var master = new GlideRecord(CONFIG.masterTable);
         master.addQuery(CONFIG.masterClassField, classSysId);
@@ -104,15 +122,17 @@
             var wasActive =
                 String(master.getValue(CONFIG.masterActiveField)) === '1';
 
-            master.setValue(CONFIG.masterActiveField, true);
+            master.setValue(CONFIG.masterActiveField, shouldBeActive);
             setIfValid(master, CONFIG.optionalClassNameField, className);
             setIfValid(master, CONFIG.optionalLastSyncedField, now);
 
             if (master.update()) {
-                if (wasActive) {
-                    stats.alreadyActiveMasterRows++;
+                if (wasActive && !shouldBeActive) {
+                    stats.deactivatedMasterRows++;
+                } else if (!wasActive && shouldBeActive) {
+                    stats.activatedMasterRows++;
                 } else {
-                    stats.reactivatedMasterRows++;
+                    stats.unchangedMasterRows++;
                 }
             } else {
                 stats.failed++;
@@ -124,35 +144,17 @@
         master.initialize();
         master.setValue(CONFIG.masterClassField, classSysId);
         master.setValue(CONFIG.masterExcludedField, false);
-        master.setValue(CONFIG.masterActiveField, true);
+        master.setValue(CONFIG.masterActiveField, shouldBeActive);
         setIfValid(master, CONFIG.optionalClassNameField, className);
         setIfValid(master, CONFIG.optionalLastSyncedField, now);
 
         if (master.insert()) {
             stats.insertedMasterRows++;
-        } else {
-            stats.failed++;
-        }
-    }
-
-    var existingMaster = new GlideRecord(CONFIG.masterTable);
-    existingMaster.addQuery(CONFIG.masterActiveField, true);
-    existingMaster.query();
-
-    while (existingMaster.next()) {
-        var existingClassSysId = existingMaster.getValue(
-            CONFIG.masterClassField
-        );
-
-        if (activeClassInfoSysIds[existingClassSysId]) {
-            continue;
-        }
-
-        existingMaster.setValue(CONFIG.masterActiveField, false);
-        setIfValid(existingMaster, CONFIG.optionalLastSyncedField, now);
-
-        if (existingMaster.update()) {
-            stats.deactivatedMasterRows++;
+            if (shouldBeActive) {
+                stats.insertedActiveMasterRows++;
+            } else {
+                stats.insertedInactiveMasterRows++;
+            }
         } else {
             stats.failed++;
         }

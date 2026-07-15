@@ -16,7 +16,7 @@
  *   CMDB Assessment Class Exclusions/master table. A class is a candidate when
  *   the master row is active and not excluded. The EACM team owns group
  *   assignment on that master table. If the master row has no owner group,
- *   the assessment routes to the EACM fallback group.
+ *   Flow 1 skips it so EACM can complete manual assignment first.
  */
 (function execute(inputs, outputs) {
     var CONFIG = {
@@ -37,7 +37,6 @@
         assessmentOwnerGroupField: 'u_owner_group',
 
         assignedStateValue: 'assigned',
-        eacmGroupSysId: '1774614b874f05d039e44226cebb3510',
 
         catalogItemBaseUrl: '/sp?id=sc_cat_item&sys_id=49a8177f3bb54b106879d3c643e45a63'
     };
@@ -57,6 +56,7 @@
         skippedDuplicate: 0,
         skippedInactive: 0,
         skippedMissingClassInfo: 0,
+        skippedMissingOwnerGroup: 0,
         routedToEacm: 0,
         failed: 0
     };
@@ -65,20 +65,6 @@
 
     function encodeUrlValue(value) {
         return encodeURIComponent(String(value || ''));
-    }
-
-    function getGroupDisplayName(groupSysId) {
-        if (!groupSysId) {
-            return '';
-        }
-
-        var group = new GlideRecord('sys_user_group');
-
-        if (group.get(groupSysId)) {
-            return group.getDisplayValue();
-        }
-
-        return String(groupSysId);
     }
 
     function buildCatalogUrl(assessmentSysId, className, ownerGroupDisplay) {
@@ -147,14 +133,21 @@
         // Owner group now comes only from the master table. Do not use
         // cmdb_class_info.managed_by_group for Flow 1 assignment.
         var ownerGroup = master.getValue(CONFIG.masterOwnerGroupField);
-        var assignedGroup = ownerGroup || CONFIG.eacmGroupSysId;
-        var assignedGroupDisplay =
-            master.getDisplayValue(CONFIG.masterOwnerGroupField) ||
-            getGroupDisplayName(CONFIG.eacmGroupSysId);
+        var assignedGroup = ownerGroup;
 
         if (!ownerGroup) {
-            stats.routedToEacm++;
+            stats.skippedMissingOwnerGroup++;
+            gs.warn(
+                '[Annual Assessment] Skipping ' +
+                className +
+                ' because master owner group is empty'
+            );
+            continue;
         }
+
+        var assignedGroupDisplay = master.getDisplayValue(
+            CONFIG.masterOwnerGroupField
+        );
 
         if (dryRun) {
             stats.wouldCreate++;
