@@ -21,6 +21,7 @@
  * Do NOT require cmdb_class_info for eligibility.
  */
 (function execute(inputs, outputs) {
+    try {
     var CONFIG = {
         tableDefinitionTable: 'sys_db_object',
         tableDefinitionNameField: 'name',
@@ -268,4 +269,21 @@
     }
 
     finish();
+    } catch (error) {
+        var errorMessage = error && error.message ?
+            error.message :
+            String(error);
+        var errorSummary = {
+            failed: 1,
+            error: errorMessage
+        };
+
+        outputs.summary = JSON.stringify(errorSummary);
+        outputs.created_assessments_json = '[]';
+
+        gs.error(
+            '[Annual Assessment] Runtime error before normal summary output: ' +
+            errorMessage
+        );
+    }
 })(inputs, outputs);
