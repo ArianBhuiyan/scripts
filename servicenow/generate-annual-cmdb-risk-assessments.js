@@ -41,6 +41,10 @@
 
         assignedStateValue: 'assigned',
 
+        groupTable: 'sys_user_group',
+        eacmFallbackGroupSysId: '1774614b874f05d039e44226cebb3510',
+        eacmFallbackGroupDisplay: 'APP - Asset & CMDB Automation',
+
         catalogItemBaseUrl: '/sp?id=sc_cat_item&sys_id=49a8177f3bb54b106879d3c643e45a63'
     };
 
@@ -59,7 +63,7 @@
         skippedDuplicate: 0,
         skippedMissingClass: 0,
         skippedMissingTableDefinition: 0,
-        skippedMissingOwnerGroup: 0,
+        routedToEacm: 0,
         failed: 0
     };
 
@@ -130,6 +134,16 @@
         return existing.hasNext();
     }
 
+    function getGroupDisplay(groupSysId, fallbackDisplay) {
+        var group = new GlideRecord(CONFIG.groupTable);
+
+        if (group.get(groupSysId)) {
+            return group.getDisplayValue();
+        }
+
+        return fallbackDisplay || groupSysId;
+    }
+
     var masterProbe = new GlideRecord(CONFIG.masterTable);
     var assessmentProbe = new GlideRecord(CONFIG.assessmentTable);
 
@@ -195,15 +209,17 @@
         }
 
         var ownerGroup = master.getValue(CONFIG.masterOwnerGroupField);
+        var assignedFromFallback = false;
 
         if (!ownerGroup) {
-            stats.skippedMissingOwnerGroup++;
-            gs.warn(
-                '[Annual Assessment] Skipping ' +
+            ownerGroup = CONFIG.eacmFallbackGroupSysId;
+            assignedFromFallback = true;
+            stats.routedToEacm++;
+            gs.info(
+                '[Annual Assessment] Routing ' +
                 className +
-                ' because master owner group is empty'
+                ' to EACM fallback because master owner group is empty'
             );
-            continue;
         }
 
         if (hasDuplicateAssessment(classSysId)) {
@@ -211,9 +227,9 @@
             continue;
         }
 
-        var assignedGroupDisplay = master.getDisplayValue(
-            CONFIG.masterOwnerGroupField
-        );
+        var assignedGroupDisplay = assignedFromFallback ?
+            getGroupDisplay(ownerGroup, CONFIG.eacmFallbackGroupDisplay) :
+            master.getDisplayValue(CONFIG.masterOwnerGroupField);
 
         if (dryRun) {
             stats.wouldCreate++;
@@ -253,6 +269,7 @@
                 class_name: className,
                 assigned_group: ownerGroup,
                 assigned_group_display: assignedGroupDisplay,
+                routed_to_eacm: assignedFromFallback,
                 catalog_url: buildCatalogUrl(
                     assessmentSysId,
                     className,
