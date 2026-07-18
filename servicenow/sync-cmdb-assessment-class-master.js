@@ -37,7 +37,8 @@
  * Optional field:
  *   u_last_synced Date/Time of last sync
  */
-(function syncCmdbAssessmentClassMaster() {
+(function syncCmdbAssessmentClassMaster(actionOutputs) {
+    try {
     var CONFIG = {
         classInfoTable: 'cmdb_class_info',
         classInfoClassField: 'class',
@@ -72,6 +73,16 @@
         skippedMissingTableDefinition: 0,
         failed: 0
     };
+
+    function writeSummary() {
+        var summary = JSON.stringify(stats);
+
+        if (actionOutputs) {
+            actionOutputs.summary = summary;
+        }
+
+        gs.info('[CMDB Assessment Class Master Sync] Summary: ' + summary);
+    }
 
     var now = new GlideDateTime();
     var classInfoClasses = {};
@@ -324,12 +335,19 @@
     var masterProbe = new GlideRecord(CONFIG.masterTable);
 
     if (!masterProbe.isValidField(CONFIG.masterClassField)) {
+        stats.failed++;
+        stats.error =
+            'Missing required field ' +
+            CONFIG.masterTable +
+            '.' +
+            CONFIG.masterClassField;
         gs.error(
             '[CMDB Assessment Class Master Sync] Missing required field ' +
             CONFIG.masterTable +
             '.' +
             CONFIG.masterClassField
         );
+        writeSummary();
         return;
     }
 
@@ -344,8 +362,23 @@
 
     deactivateRowsMissingFromCandidates();
 
-    gs.info(
-        '[CMDB Assessment Class Master Sync] Summary: ' +
-        JSON.stringify(stats)
-    );
-})();
+    writeSummary();
+    } catch (error) {
+        var errorMessage = error && error.message ?
+            error.message :
+            String(error);
+        var errorSummary = {
+            failed: 1,
+            error: errorMessage
+        };
+
+        if (actionOutputs) {
+            actionOutputs.summary = JSON.stringify(errorSummary);
+        }
+
+        gs.error(
+            '[CMDB Assessment Class Master Sync] Runtime error before normal summary output: ' +
+            errorMessage
+        );
+    }
+})(typeof outputs !== 'undefined' ? outputs : null);
