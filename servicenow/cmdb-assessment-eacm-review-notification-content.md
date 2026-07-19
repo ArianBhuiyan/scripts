@@ -18,14 +18,12 @@ Message HTML:
 <p>A CMDB assessment has been submitted and is ready for EACM review.</p>
 
 <p>
-  <b>Assessment Year:</b> ${u_assessment_year}<br/>
-  <b>Class:</b> ${u_class}<br/>
-  <b>Owner Group:</b> ${u_owner_group}<br/>
-  <b>Submitted By:</b> ${u_submitted_by}<br/>
-  <b>State:</b> ${u_state}
+  <strong>Assessment Year:</strong> ${u_assessment_year}<br>
+  <strong>Class:</strong> ${u_class}<br>
+  <strong>Owner Group:</strong> ${u_owner_group}<br>
+  <strong>Submitted By:</strong> ${u_submitted_by}<br>
+  <strong>State:</strong> ${u_state}
 </p>
 
-<p>
-  <a href="${URI_REF}">Open CMDB Assessment</a>
-</p>
+<p>${URI_REF}</p>
 ```
