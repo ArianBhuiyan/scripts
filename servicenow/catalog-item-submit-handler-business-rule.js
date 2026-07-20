@@ -33,6 +33,9 @@
         assessmentSubmittedByField: 'u_submitted_by',
         assessmentStateField: 'u_state',
         underReviewStateValue: 'under_review',
+        rejectionReasonField: 'u_rejection_reason',
+        reviewedByField: 'u_reviewed_by',
+        reviewedOnField: 'u_reviewed_on',
 
         answerChoiceTable: 'u_cmdb_assessment_answer_choices',
         answerChoiceQuestionField: 'u_question',
@@ -191,6 +194,19 @@
         CONFIG.assessmentStateField,
         CONFIG.underReviewStateValue
     );
+
+    if (assessment.isValidField(CONFIG.rejectionReasonField)) {
+        assessment.setValue(CONFIG.rejectionReasonField, '');
+    }
+
+    if (assessment.isValidField(CONFIG.reviewedByField)) {
+        assessment.setValue(CONFIG.reviewedByField, '');
+    }
+
+    if (assessment.isValidField(CONFIG.reviewedOnField)) {
+        assessment.setValue(CONFIG.reviewedOnField, '');
+    }
+
     assessment.update();
 
     gs.info(
