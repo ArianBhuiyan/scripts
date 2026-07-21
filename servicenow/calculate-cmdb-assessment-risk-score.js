@@ -18,6 +18,8 @@
     var CONFIG = {
         assessmentTable: 'u_cmdb_assessment',
         assessmentRiskScoreField: 'u_risk_score',
+        assessmentStateField: 'u_state',
+        approvedStateValue: 'approved',
 
         responseTable: 'u_cmdb_assessment_responses',
         responseAssessmentField: 'u_assessment',
@@ -44,6 +46,7 @@
         missingRawScoreCount: 0,
         missingWeightCount: 0,
         riskScore: 0,
+        assessmentState: '',
         expectedResponseCount: CONFIG.expectedResponseCount,
         wroteRiskScore: false,
         errors: []
@@ -90,6 +93,14 @@
             finish('failed');
             return;
         }
+
+        if (!assessment.isValidField(CONFIG.assessmentStateField)) {
+            stats.errors.push('Assessment state field does not exist: ' + CONFIG.assessmentStateField);
+            finish('failed');
+            return;
+        }
+
+        stats.assessmentState = assessment.getValue(CONFIG.assessmentStateField) || '';
 
         var seenQuestions = {};
         var totalScore = 0;
@@ -175,6 +186,15 @@
         }
 
         if (!dryRun) {
+            if (stats.assessmentState !== CONFIG.approvedStateValue) {
+                stats.errors.push(
+                    'Risk score can only be written when assessment state is approved. Current state: ' +
+                    stats.assessmentState
+                );
+                finish('validation_failed');
+                return;
+            }
+
             assessment.setValue(CONFIG.assessmentRiskScoreField, totalScore);
             assessment.update();
             stats.wroteRiskScore = true;
