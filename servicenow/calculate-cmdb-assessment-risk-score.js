@@ -19,7 +19,7 @@
         assessmentTable: 'u_cmdb_assessment',
         assessmentRiskScoreField: 'u_risk_score',
         assessmentStateField: 'u_state',
-        approvedStateValue: 'approved',
+        completeStateValue: 'complete',
 
         responseTable: 'u_cmdb_assessment_responses',
         responseAssessmentField: 'u_assessment',
@@ -186,9 +186,9 @@
         }
 
         if (!dryRun) {
-            if (stats.assessmentState !== CONFIG.approvedStateValue) {
+            if (stats.assessmentState !== CONFIG.completeStateValue) {
                 stats.errors.push(
-                    'Risk score can only be written when assessment state is approved. Current state: ' +
+                    'Risk score can only be written when assessment state is complete. Current state: ' +
                     stats.assessmentState
                 );
                 finish('validation_failed');
