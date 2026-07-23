@@ -22,11 +22,15 @@
  *   Approved By and Approved Date when those fields are available.
  *   When an assessment is rejected, clear approval stamps and route the
  *   assessment back to the owner group for correction when possible.
+ *   Rejections require an EACM-entered rejection reason so the owner
+ *   knows what to correct.
  *
  * Notes:
  *   If the internal field names for Approved By or Approved Date differ
  *   in the instance, update CONFIG.assessmentApprovedByField and
  *   CONFIG.assessmentApprovedDateField before activating the rule.
+ *   Create a multi-line text field named u_rejection_reason before
+ *   enabling requireRejectionReason.
  */
 (function executeRule(current, previous /*null when async*/) {
     var CONFIG = {
@@ -38,6 +42,7 @@
         assessmentApprovedDateField: 'u_approved_date',
         assessmentAssignedGroupField: 'u_assigned_group',
         assessmentOwnerGroupField: 'u_owner_group',
+        assessmentRejectionReasonField: 'u_rejection_reason',
 
         responseTable: 'u_cmdb_assessment_responses',
         responseAssessmentField: 'u_assessment',
@@ -46,7 +51,8 @@
 
         clearApprovalWhenRejected: true,
         clearApprovalWhenReopened: true,
-        assignOwnerGroupWhenRejected: true
+        assignOwnerGroupWhenRejected: true,
+        requireRejectionReason: true
     };
 
     var oldState = previous ?
@@ -76,6 +82,11 @@
         newState === CONFIG.rejectedStateValue &&
         CONFIG.clearApprovalWhenRejected
     ) {
+        if (!hasRejectionReason()) {
+            current.setAbortAction(true);
+            return;
+        }
+
         clearApprovalFields();
         assignBackToOwnerGroup();
         gs.info(
@@ -128,6 +139,34 @@
                 'Cannot complete this assessment because ' +
                 missingRawScoreCount +
                 ' response row(s) are missing Raw Score.'
+            );
+            return false;
+        }
+
+        return true;
+    }
+
+    function hasRejectionReason() {
+        if (!CONFIG.requireRejectionReason) {
+            return true;
+        }
+
+        if (!current.isValidField(CONFIG.assessmentRejectionReasonField)) {
+            gs.addErrorMessage(
+                'Cannot reject this assessment because the Rejection Reason field is missing. Create field ' +
+                CONFIG.assessmentRejectionReasonField +
+                ' on CMDB Assessment.'
+            );
+            return false;
+        }
+
+        var rejectionReason = String(
+            current.getValue(CONFIG.assessmentRejectionReasonField) || ''
+        ).trim();
+
+        if (!rejectionReason) {
+            gs.addErrorMessage(
+                'Enter a Rejection Reason before setting this assessment to Rejected.'
             );
             return false;
         }
