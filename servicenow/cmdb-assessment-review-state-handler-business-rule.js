@@ -20,6 +20,8 @@
  *   Before an assessment can move to Complete, confirm the expected
  *   six response rows exist and each has a raw score. Then stamp
  *   Approved By and Approved Date when those fields are available.
+ *   When an assessment is rejected, clear approval stamps and route the
+ *   assessment back to the owner group for correction when possible.
  *
  * Notes:
  *   If the internal field names for Approved By or Approved Date differ
@@ -34,6 +36,8 @@
 
         assessmentApprovedByField: 'u_approved_by',
         assessmentApprovedDateField: 'u_approved_date',
+        assessmentAssignedGroupField: 'u_assigned_group',
+        assessmentOwnerGroupField: 'u_owner_group',
 
         responseTable: 'u_cmdb_assessment_responses',
         responseAssessmentField: 'u_assessment',
@@ -41,7 +45,8 @@
         expectedResponseCount: 6,
 
         clearApprovalWhenRejected: true,
-        clearApprovalWhenReopened: true
+        clearApprovalWhenReopened: true,
+        assignOwnerGroupWhenRejected: true
     };
 
     var oldState = previous ?
@@ -72,6 +77,7 @@
         CONFIG.clearApprovalWhenRejected
     ) {
         clearApprovalFields();
+        assignBackToOwnerGroup();
         gs.info(
             '[CMDB Assessment Review] Assessment rejected by EACM: ' +
             current.getUniqueValue()
@@ -157,5 +163,35 @@
         if (current.isValidField(CONFIG.assessmentApprovedDateField)) {
             current.setValue(CONFIG.assessmentApprovedDateField, '');
         }
+    }
+
+    function assignBackToOwnerGroup() {
+        if (!CONFIG.assignOwnerGroupWhenRejected) {
+            return;
+        }
+
+        if (
+            !current.isValidField(CONFIG.assessmentAssignedGroupField) ||
+            !current.isValidField(CONFIG.assessmentOwnerGroupField)
+        ) {
+            gs.warn(
+                '[CMDB Assessment Review] Assignment fields are not available for rejection routing.'
+            );
+            return;
+        }
+
+        var ownerGroup = String(
+            current.getValue(CONFIG.assessmentOwnerGroupField) || ''
+        ).trim();
+
+        if (!ownerGroup) {
+            gs.warn(
+                '[CMDB Assessment Review] Rejected assessment has no Owner Group to assign back to: ' +
+                current.getUniqueValue()
+            );
+            return;
+        }
+
+        current.setValue(CONFIG.assessmentAssignedGroupField, ownerGroup);
     }
 })(current, previous);
