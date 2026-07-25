@@ -26,7 +26,7 @@ Who Will Receive:
 Users/Groups in fields: Assigned Group
 ```
 
-If the `CMDB Assessment Review State Handler` Business Rule is active, rejected assessments are assigned back to Owner Group before notification processing. If that Business Rule is not active, use `Owner Group` as the recipient field instead.
+If the `CMDB Assessment Rejection Handler` Business Rule is active, rejected assessments are assigned back to Owner Group before notification processing. If that Business Rule is not active, use `Owner Group` as the recipient field instead.
 
 Required Assessment Field:
 
@@ -37,7 +37,7 @@ Type: String / Multi Line Text
 Table: CMDB Assessment [u_cmdb_assessment]
 ```
 
-Add this field to the CMDB Assessment form so EACM can enter the correction reason before setting State to Rejected. The review-state Business Rule blocks rejection when this field is empty.
+Add this field to the CMDB Assessment form so EACM can enter the correction reason before setting State to Rejected. The rejection Business Rule blocks rejection when this field is empty.
 
 Required Notification Email Script:
 
