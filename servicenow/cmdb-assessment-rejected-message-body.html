@@ -1,0 +1,20 @@
+<p>A CMDB assessment was rejected by EACM and needs correction.</p>
+
+<p>
+  <strong>Assessment Year:</strong> ${u_assessment_year}<br>
+  <strong>Class:</strong> ${u_class}<br>
+  <strong>Owner Group:</strong> ${u_owner_group}<br>
+  <strong>Submitted By:</strong> ${u_submitted_by}<br>
+  <strong>State:</strong> ${u_state}
+</p>
+
+<p>
+  <strong>Rejection Reason:</strong><br>
+  ${u_rejection_reason}
+</p>
+
+<p>Please reopen the assessment questionnaire, update the answers, and submit it again for EACM review.</p>
+
+${mail_script:cmdb_assessment_rejection_link}
+
+<p>${URI_REF}</p>
