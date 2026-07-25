@@ -19,12 +19,17 @@
  *   Convert the submitted Catalog Item variables into permanent
  *   CMDB Assessment Response rows, then move the parent assessment
  *   to Under Review.
+ *
+ * Security:
+ *   Only members of the parent assessment's Assigned Group can save
+ *   Catalog Item answers into the assessment response tables.
  */
 (function executeRule(current, previous /*null when async*/) {
     var CONFIG = {
         catalogItemSysId: '49a8177f3bb54b106879d3c643e45a63',
 
         assessmentTable: 'u_cmdb_assessment',
+        assessmentAssignedGroupField: 'u_assigned_group',
         assessmentSubmittedByField: 'u_submitted_by',
         assessmentStateField: 'u_state',
         underReviewStateValue: 'under_review',
@@ -37,7 +42,11 @@
         responseAssessmentField: 'u_assessment',
         responseQuestionField: 'u_question',
         responseAnswerChoiceField: 'u_answer_choice',
-        responseRawScoreField: 'u_raw_score'
+        responseRawScoreField: 'u_raw_score',
+
+        groupMemberTable: 'sys_user_grmember',
+        groupMemberUserField: 'user',
+        groupMemberGroupField: 'group'
     };
 
     if (String(current.cat_item) !== CONFIG.catalogItemSysId) {
@@ -59,6 +68,19 @@
     if (!assessment.get(assessmentSysId)) {
         gs.error(
             '[CMDB Assessment Submit] Assessment not found: ' +
+            assessmentSysId
+        );
+        return;
+    }
+
+    if (!currentUserCanSubmitAssessment(assessment)) {
+        gs.addErrorMessage(
+            'You are not authorized to submit this CMDB assessment.'
+        );
+        gs.error(
+            '[CMDB Assessment Submit] Unauthorized submit attempt. User ' +
+            gs.getUserID() +
+            ' is not in assigned group for assessment ' +
             assessmentSysId
         );
         return;
@@ -177,4 +199,26 @@
         ' responses and moved assessment to under_review: ' +
         assessmentSysId
     );
+
+    function currentUserCanSubmitAssessment(assessmentRecord) {
+        var assignedGroupSysId = String(
+            assessmentRecord.getValue(CONFIG.assessmentAssignedGroupField) || ''
+        ).trim();
+
+        if (!assignedGroupSysId) {
+            gs.error(
+                '[CMDB Assessment Submit] Assessment has no assigned group: ' +
+                assessmentRecord.getUniqueValue()
+            );
+            return false;
+        }
+
+        var membership = new GlideRecord(CONFIG.groupMemberTable);
+        membership.addQuery(CONFIG.groupMemberUserField, gs.getUserID());
+        membership.addQuery(CONFIG.groupMemberGroupField, assignedGroupSysId);
+        membership.setLimit(1);
+        membership.query();
+
+        return membership.next();
+    }
 })(current, previous);
