@@ -4,17 +4,11 @@ Event: u.cmdb.assessment.catalog.ready
 Table: u_cmdb_assessment
 Send to: Users/Groups in fields -> Assigned Group
 Subject: CMDB Annual Risk Assessments Ready
+ServiceNow field: paste only the mail-script token below into Message HTML.
+The Prepare Created Assessment Notifications Action now builds the full HTML body.
 
 Requires Notification Email Script:
   cmdb_assessment_links
 -->
 
-<p>Hello,</p>
-
-<p>Your group has CMDB Annual Risk Assessment(s) ready for completion.</p>
-
-<p>Please complete each assessment using the link(s) below:</p>
-
 ${mail_script:cmdb_assessment_links}
-
-<p>Thank you.</p>

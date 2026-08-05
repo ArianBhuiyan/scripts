@@ -45,7 +45,8 @@
         eacmFallbackGroupSysId: '1774614b874f05d039e44226cebb3510',
         eacmFallbackGroupDisplay: 'APP - Asset & CMDB Automation',
 
-        catalogItemBaseUrl: '/sp?id=sc_cat_item&sys_id=49a8177f3bb54b106879d3c643e45a63'
+        instanceBaseUrl: 'https://mtb.service-now.com',
+        catalogItemPath: '/sp?id=sc_cat_item&sys_id=49a8177f3bb54b106879d3c643e45a63'
     };
 
     var dryRun = String(inputs.dry_run) === 'true';
@@ -113,7 +114,8 @@
 
     function buildCatalogUrl(assessmentSysId, className, ownerGroupDisplay) {
         return (
-            CONFIG.catalogItemBaseUrl +
+            CONFIG.instanceBaseUrl +
+            CONFIG.catalogItemPath +
             '&sysparm_assessment_sys_id=' +
             encodeUrlValue(assessmentSysId) +
             '&sysparm_class_name=' +

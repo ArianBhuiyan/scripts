@@ -13,6 +13,10 @@
  *   event.parm2 = JSON payload for one assigned group
  */
 (function runMailScript(current, template, email, email_action, event) {
+    var CONFIG = {
+        instanceBaseUrl: 'https://mtb.service-now.com'
+    };
+
     function escapeHtml(value) {
         return String(value || '')
             .replace(/&/g, '&amp;')
@@ -30,7 +34,7 @@
         }
 
         if (url.indexOf('/') === 0) {
-            var baseUrl = String(gs.getProperty('glide.servlet.uri') || '');
+            var baseUrl = CONFIG.instanceBaseUrl;
 
             if (baseUrl && baseUrl.charAt(baseUrl.length - 1) === '/') {
                 baseUrl = baseUrl.substring(0, baseUrl.length - 1);
@@ -52,6 +56,11 @@
             return;
         }
 
+        if (fallback.indexOf('<') === 0) {
+            template.print(fallback);
+            return;
+        }
+
         template.print('<pre>' + escapeHtml(fallback) + '</pre>');
     }
 
@@ -65,6 +74,11 @@
     }
 
     var assessments = payload.assessments || [];
+
+    if (payload.email_html_body) {
+        template.print(String(payload.email_html_body));
+        return;
+    }
 
     if (!assessments.length) {
         printPlainTextFallback();

@@ -27,7 +27,9 @@
         assessmentClassField: 'u_class',
         assessmentYearField: 'u_assessment_year',
         assessmentAssignedGroupField: 'u_assigned_group',
-        defaultEventName: 'u.cmdb.assessment.catalog.ready'
+        defaultEventName: 'u.cmdb.assessment.catalog.ready',
+        instanceBaseUrl: 'https://mtb.service-now.com',
+        emailSubject: 'CMDB Annual Risk Assessments Ready'
     };
 
     var notificationDryRun = String(inputs.notification_dry_run) !== 'false';
@@ -51,6 +53,72 @@
     var payloadOrder = [];
     var createdAssessments;
 
+    function escapeHtml(value) {
+        return String(value || '')
+            .replace(/&/g, '&amp;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;')
+            .replace(/"/g, '&quot;')
+            .replace(/'/g, '&#39;');
+    }
+
+    function absoluteUrl(url) {
+        url = String(url || '').trim();
+
+        if (url.indexOf('http://') === 0 || url.indexOf('https://') === 0) {
+            return url;
+        }
+
+        if (url.indexOf('/') === 0) {
+            return CONFIG.instanceBaseUrl + url;
+        }
+
+        return url;
+    }
+
+    function buildLinkLabel(item) {
+        var label = item.class_name || 'CMDB class';
+
+        if (item.assessment_year) {
+            label += ' - ' + item.assessment_year;
+        }
+
+        if (item.assessment_display) {
+            label += ' (' + item.assessment_display + ')';
+        }
+
+        return label;
+    }
+
+    function buildEmailHtml(payload) {
+        var html = [];
+
+        html.push('<p>Hello,</p>');
+        html.push(
+            '<p>Your group has CMDB Annual Risk Assessment(s) ready for completion.</p>'
+        );
+        html.push(
+            '<p>Please complete each assessment using the link(s) below:</p>'
+        );
+        html.push('<ul>');
+
+        for (var i = 0; i < payload.assessments.length; i++) {
+            var item = payload.assessments[i];
+            html.push(
+                '<li><a href="' +
+                escapeHtml(item.catalog_url) +
+                '">' +
+                escapeHtml(buildLinkLabel(item)) +
+                '</a></li>'
+            );
+        }
+
+        html.push('</ul>');
+        html.push('<p>Thank you.</p>');
+
+        return html.join('');
+    }
+
     try {
         createdAssessments = JSON.parse(rawCreatedAssessments);
 
@@ -73,7 +141,7 @@
 
         var row = createdAssessments[i] || {};
         var assessmentSysId = String(row.assessment_sys_id || '').trim();
-        var catalogUrl = String(row.catalog_url || '').trim();
+        var catalogUrl = absoluteUrl(row.catalog_url);
 
         if (!assessmentSysId || !catalogUrl) {
             stats.skippedInvalidRow++;
@@ -118,7 +186,9 @@
                 assessment_count: 0,
                 assessments: [],
                 catalog_urls: [],
-                link_list_text: ''
+                link_list_text: '',
+                email_subject: CONFIG.emailSubject,
+                email_html_body: ''
             };
             payloadOrder.push(assignedGroup);
         }
@@ -160,6 +230,7 @@
         }
 
         payload.link_list_text = linkLines.join('\n');
+        payload.email_html_body = buildEmailHtml(payload);
         notificationPayloads.push(payload);
         stats.prepared++;
 
@@ -186,7 +257,7 @@
             gs.eventQueue(
                 eventName,
                 eventRecord,
-                payload.link_list_text,
+                payload.email_html_body,
                 JSON.stringify(payload)
             );
             stats.queued++;
